@@ -1,79 +1,125 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const request = require("request");
-const url_1 = require("url");
-const logger_1 = require("./logger");
-// valid variations:
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/ohlcv/recent
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/vwap/recent'
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/count_ohlcv_vwap/recent
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/spot_direct_exchange_rate/link/usdt/recent?interval=1m&limit=2
-const validateRegion = v => v && ['eu', 'us'].includes(v);
-const validateEndpoint = v => v && !!v.match(/^v1\/data\/trades\.v[0-9]+\/(exchanges\/[^?\/]+\/[^?\/]+\/[^?\/]+\/aggregations\/[^?\/]+|spot_direct_exchange_rate\/[^?\/]+\/[^?\/]+)\/recent$/);
-const validateParams = v => v && !!v.match(/^[\x00-\x7F]*$/);
-const createRequest = (input, callback) => {
-    logger_1.default.info('Received request', input);
-    const throwError = (statusCode, error) => callback(statusCode, {
-        jobRunID: input.id,
-        status: 'errored',
-        error
-    });
-    const { region, endpoint, params } = input.data;
-    if (!validateRegion(region)) {
-        return throwError(400, 'Invalid region');
-    }
-    if (!validateEndpoint(endpoint)) {
-        return throwError(400, 'Invalid endpoint');
-    }
-    if (!validateParams(params)) {
-        return throwError(400, 'Invalid params');
-    }
-    const url = `https://${region}.market-api.kaiko.io/${endpoint}?${params}`;
+const request = require("request-promise-native");
+const gcloud_logger_1 = require("./gcloud-logger");
+const big_js_1 = require("big.js");
+const winston = require("winston");
+let logger = winston.createLogger({
+    level: 'info',
+    transports: [
+        new winston.transports.Console(),
+    ],
+});
+exports.fetchMarketData = async (region, endpoint, params) => {
+    const url = `https://${region}.market-api.kaiko.io/v1/data/trades.v1/${endpoint}?${params}`;
     const headers = {
         'X-Api-Key': process.env.CUBIT_API_KEY,
-        'User-Agent': 'Kaiko Chainlink Adapter'
+        'User-Agent': 'Kaiko Chainlink Adapter (VWAP edition)'
     };
-    const qs = new url_1.URLSearchParams(params);
+    logger.info('Forwarding request', {
+        url
+    });
     const options = {
         url,
-        qs,
         headers,
         json: true
     };
-    logger_1.default.info('Forwarding request', {
-        jobRunID: input.id,
-        url
+    const response = await request(options);
+    logger.info('Got response');
+    return response;
+};
+exports.fetchDirectSpotExchangeRate = async (baseAsset, quoteAsset, interval) => {
+    const response = await exports.fetchMarketData('us', `spot_direct_exchange_rate/${baseAsset}/${quoteAsset}/recent`, `interval=${interval}&limit=1`);
+    return {
+        quoteAsset,
+        volume: new big_js_1.default(response.data[0].volume),
+        price: new big_js_1.default(response.data[0].price)
+    };
+};
+exports.fetchRate = async (baseAsset, quoteAsset, interval) => {
+    if (quoteAsset == 'usd') {
+        return await exports.fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
+    }
+    const baseQuote = await exports.fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
+    const quoteUSD = await exports.fetchDirectSpotExchangeRate(quoteAsset, 'usd', interval);
+    return {
+        quoteAsset: quoteAsset,
+        volume: baseQuote.volume,
+        price: baseQuote.price.mul(quoteUSD.price)
+    };
+};
+exports.calculateVWAP = (entries) => {
+    const volume = entries.reduce(((acc, { volume }) => acc.plus(volume)), new big_js_1.default(0));
+    const price = entries.reduce(((acc, { price, volume }) => acc.plus(price.mul(volume))), new big_js_1.default(0)).div(volume);
+    return {
+        price,
+        volume
+    };
+};
+exports.calculateRate = async (baseAsset, quoteAssets, interval) => {
+    const constituents = await Promise.all(quoteAssets.map(async (quoteAsset) => await exports.fetchRate(baseAsset, quoteAsset, interval)));
+    const { price, volume } = exports.calculateVWAP(constituents);
+    const result = {
+        baseAsset,
+        quoteAssets,
+        price: price.toString(),
+        volume: volume.toString(),
+        constituents: constituents.map(c => ({
+            quoteAsset: c.quoteAsset,
+            volume: c.volume.toString(),
+            price: c.price.toString(),
+        }))
+    };
+    return result;
+};
+const run = async (input) => {
+    if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.CUBIT_API_KEY)) {
+        logger.error(`Invalid or missing.CUBIT_API_KEY ${process.env.CUBIT_API_KEY}`);
+    }
+    if (!/^[a-zA-Z0-9_]{1,50}$/.test(process.env.BASE_ASSET)) {
+        logger.error(`Invalid or missing BASE_ASSET ${process.env.BASE_ASSET}`);
+    }
+    if (!/^[a-zA-Z0-9_,]{1,200}$/.test(process.env.QUOTE_ASSETS)) {
+        logger.error(`Invalid or missing QUOTE_ASSETS ${process.env.QUOTE_ASSETS}`);
+    }
+    const baseAsset = process.env.BASE_ASSET;
+    const quoteAssets = process.env.QUOTE_ASSETS.split(',');
+    quoteAssets.forEach(q => {
+        if (!/^[a-zA-Z0-9_]{1,50}$/.test(q)) {
+            logger.error(`Invalid quote asset ${q}`);
+        }
     });
-    request(options, (error, response, body) => {
-        logger_1.default.info('Got response', {
-            jobRunID: input.id,
-            statusCode: response.statusCode,
-            error
-        });
-        if (error || response.statusCode >= 400) {
-            callback(response.statusCode, {
+    gcloud_logger_1.default.info('Received request', input);
+    try {
+        const data = await exports.calculateRate(baseAsset, quoteAssets, input.data.interval);
+        return [200, {
+                jobRunID: input.id,
+                status: 'completed',
+                data
+            }];
+    }
+    catch (err) {
+        const statusCode = err.statusCode || 500;
+        const details = err.body || err.message;
+        logger.error(err);
+        return [statusCode, {
                 jobRunID: input.id,
                 status: 'errored',
-                error: body
-            });
-        }
-        else {
-            callback(response.statusCode, {
-                jobRunID: input.id,
-                data: body
-            });
-        }
-    });
+                error: details
+            }];
+    }
 };
+// GCP Cloud Fuction handler 
 exports.gcpservice = (req, res) => {
-    createRequest(req.body, (statusCode, data) => {
+    logger = gcloud_logger_1.default;
+    run(req.body).then(([statusCode, data]) => {
         res.status(statusCode).send(data);
     });
 };
+// AWS Lambda handler
 exports.handler = (event, context, callback) => {
-    createRequest(event, (statusCode, data) => {
+    run(event).then(([statusCode, data]) => {
         callback(null, data);
     });
 };
-module.exports.createRequest = createRequest;
 //# sourceMappingURL=index.js.map
