@@ -1,91 +1,140 @@
-import request = require('request');
+import request = require('request-promise-native');
 
 import { RequestPart } from 'request';
-import { URLSearchParams } from 'url';
-import logger from './logger';
+import gcloudLogger from './gcloud-logger';
+import Big from 'big.js';
+import winston = require('winston');
 
+let logger = winston.createLogger({
+  level: 'info',
+  transports: [
+    new winston.transports.Console(),
+  ],
+});
 
-// valid variations:
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/ohlcv/recent
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/vwap/recent'
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/exchanges/cbse/spot/btc-usd/aggregations/count_ohlcv_vwap/recent
-// https://<eu|us>.market-api.kaiko.io/v1/data/trades.v1/spot_direct_exchange_rate/link/usdt/recent?interval=1m&limit=2
+interface VWAPEntry {
+  volume: Big,
+  price: Big
+}
 
-const validateRegion: Validator = v =>
-    v && ['eu', 'us'].includes(v);
-const validateEndpoint: Validator = v =>
-    v && !!v.match(/^v1\/data\/trades\.v[0-9]+\/(exchanges\/[^?\/]+\/[^?\/]+\/[^?\/]+\/aggregations\/[^?\/]+|spot_direct_exchange_rate\/[^?\/]+\/[^?\/]+)\/recent$/);
-const validateParams: Validator = v =>
-    v && !!v.match(/^[\x00-\x7F]*$/);
-
-const createRequest = (input: InputParams, callback: Callback) => {
-  logger.info('Received request', input);
-  const throwError = (statusCode: number, error: string) => callback(statusCode, {
-    jobRunID: input.id,
-    status: 'errored',
-    error
-  });
-
-  const { region, endpoint, params } = input.data;
-  if (!validateRegion(region)) {
-    return throwError(400, 'Invalid region');
-  }
-  if (!validateEndpoint(endpoint)) {
-    return throwError(400, 'Invalid endpoint');
-  }
-  if (!validateParams(params)) {
-    return throwError(400, 'Invalid params');
-  }
-
-  const url = `https://${region}.market-api.kaiko.io/${endpoint}?${params}`;
+export const fetchMarketData = async (region: string, endpoint: string, params: string): Promise<any> => {
+  const url = `https://${region}.market-api.kaiko.io/v1/data/trades.v1/${endpoint}?${params}`
   const headers = {
     'X-Api-Key': process.env.CUBIT_API_KEY,
-    'User-Agent': 'Kaiko Chainlink Adapter'
+    'User-Agent': 'Kaiko Chainlink Adapter (VWAP edition)'
   };
-  const qs = new URLSearchParams(params);
+  logger.info('Forwarding request', {
+    url
+  });
   const options = {
     url,
-    qs,
     headers,
     json: true
   };
-
-  logger.info('Forwarding request', {
-    jobRunID: input.id,
-    url
-  });
-  request(options, (error, response, body) => {
-
-    logger.info('Got response', {
-      jobRunID: input.id,
-      statusCode: response.statusCode,
-      error
-    });
-    if (error || response.statusCode >= 400) {
-      callback(response.statusCode, {
-        jobRunID: input.id,
-        status: 'errored',
-        error: body
-      });
-    } else {
-      callback(response.statusCode, {
-        jobRunID: input.id,
-        data: body
-      });
-    }
-  });
+  const response = await request(options);
+  logger.info('Got response');
+  return response;
 };
 
-exports.gcpservice = (req: RequestPart, res: any) => {
-  createRequest(req.body, (statusCode, data) => {
+export const fetchDirectSpotExchangeRate = async (baseAsset: string, quoteAsset: string, interval: string) => {
+  const response = await fetchMarketData('us', `spot_direct_exchange_rate/${baseAsset}/${quoteAsset}/recent`, `interval=${interval}&limit=1`);
+  return {
+    quoteAsset,
+    volume: new Big(response.data[0].volume),
+    price: new Big(response.data[0].price)
+  };
+};
+
+export const fetchRate = async (baseAsset: string, quoteAsset: string, interval: string) => {
+  if (quoteAsset == 'usd') {
+    return await fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
+  }
+  const baseQuote = await fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
+  const quoteUSD = await fetchDirectSpotExchangeRate(quoteAsset, 'usd', interval);
+  return {
+    quoteAsset: quoteAsset,
+    volume: baseQuote.volume,
+    price: baseQuote.price.mul(quoteUSD.price)
+  }
+}
+
+export const calculateVWAP = (entries: VWAPEntry[]): VWAPEntry => {
+  const volume = entries.reduce(((acc: Big, { volume }) => acc.plus(volume)), new Big(0));
+  const price = entries.reduce(((acc: Big, { price, volume }) => acc.plus(price.mul(volume))), new Big(0)).div(volume);
+  return {
+    price,
+    volume
+  }
+};
+
+export const calculateRate = async (baseAsset: string, quoteAssets: string[], interval: string) => {
+  const constituents = await Promise.all(quoteAssets.map(async quoteAsset =>
+    await fetchRate(baseAsset, quoteAsset, interval)
+  ));
+  const { price, volume } = calculateVWAP(constituents);
+  const result = {
+    baseAsset,
+    quoteAssets,
+    price: price.toString(),
+    volume: volume.toString(),
+    constituents: constituents.map(c => ({
+      quoteAsset: c.quoteAsset,
+      volume: c.volume.toString(),
+      price: c.price.toString(),
+    }))
+  };
+  return result;
+};
+
+const run = async (input: InputParams): Promise<[Number, ChainlinkResult]> => {
+  if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.CUBIT_API_KEY)) {
+    logger.error(`Invalid or missing.CUBIT_API_KEY ${process.env.CUBIT_API_KEY}`);
+  }
+  if (!/^[a-zA-Z0-9_]{1,50}$/.test(process.env.BASE_ASSET)) {
+    logger.error(`Invalid or missing BASE_ASSET ${process.env.BASE_ASSET}`);
+  }
+  if (!/^[a-zA-Z0-9_,]{1,200}$/.test(process.env.QUOTE_ASSETS)) {
+    logger.error(`Invalid or missing QUOTE_ASSETS ${process.env.QUOTE_ASSETS}`);
+  }
+  const baseAsset = process.env.BASE_ASSET;
+  const quoteAssets = process.env.QUOTE_ASSETS.split(',');
+  quoteAssets.forEach(q => {
+    if (!/^[a-zA-Z0-9_]{1,50}$/.test(q)) {
+      logger.error(`Invalid quote asset ${q}`);
+    }
+  });
+
+  gcloudLogger.info('Received request', input);
+  try {
+    const data = await calculateRate(baseAsset, quoteAssets, input.data.interval);
+    return [200, {
+      jobRunID: input.id,
+      status: 'completed',
+      data
+    }];
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    const details = err.body || err.message;
+    logger.error(err);
+    return [statusCode, {
+      jobRunID: input.id,
+      status: 'errored',
+      error: details
+    }];
+  }
+};
+
+// GCP Cloud Fuction handler 
+export const gcpservice = (req: RequestPart, res: any) => {
+  logger = gcloudLogger;
+  run(req.body).then(([statusCode, data]) => {
     res.status(statusCode).send(data);
   });
 };
 
-exports.handler = (event: any, context: any, callback: Callback) => {
-  createRequest(event, (statusCode, data) => {
+// AWS Lambda handler
+export const handler = (event: InputParams, context: any, callback: Callback) => {
+  run(event).then(([statusCode, data]) => {
     callback(null, data);
   });
 };
-
-module.exports.createRequest = createRequest;

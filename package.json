@@ -8,17 +8,23 @@
     "build": "npx tsc",
     "postbuild": "cp package*.json ./dist",
     "lint": "tslint --config tslint.json '*.ts' 'src/**/*.ts' 'test/**.*.ts' -t verbose",
-    "test": "mocha -r ts-node/register test/**/*.test.ts",
+    "test": "TS_NODE_FILES=true mocha -r ts-node/register test/**/*.test.ts",
     "watch": "npx tsc -w"
   },
   "dependencies": {
     "@google-cloud/logging-winston": "^0.11.1",
+    "big.js": "^5.2.2",
     "moment": "^2.22.2",
     "request": "^2.88.0",
+    "request-promise-native": "^1.0.7",
     "winston": "^3.2.1"
   },
   "devDependencies": {
+    "@types/big.js": "^4.0.5",
+    "@types/chai": "^4.2.4",
+    "@types/mocha": "^5.2.7",
     "@types/request": "^2.48.1",
+    "@types/request-promise-native": "^1.0.17",
     "@types/winston": "^2.4.4",
     "chai": "^4.2.0",
     "mocha": "^5.2.0",

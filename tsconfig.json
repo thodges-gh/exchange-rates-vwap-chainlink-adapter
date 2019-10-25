@@ -12,7 +12,8 @@
     "rootDir": "./src/"
   },
   "files": [
-      "src/index.ts",
-      "src/index.d.ts"
+      "src/index.d.ts",
+      "src/cli.ts",
+      "src/index.ts"
   ]
 }

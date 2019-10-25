@@ -1,9 +1,5 @@
-type Validator = (v: string) => boolean;
-
 interface InputData {
-  region: string;
-  endpoint: string;
-  params?: string;
+  interval: string;
 }
 
 interface InputParams {
@@ -19,4 +15,3 @@ interface ChainlinkResult {
 }
 
 type Callback = (statusCode: number, result: ChainlinkResult) => void;
-

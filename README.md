@@ -1,15 +1,33 @@
-# Chainlink Kaiko External Adapter
+# Chainlink Kaiko External Adapter - VWAP aggregating version
 
-## Install
+## Install & build
 
 ```bash
 npm install
+npm run build
 ```
 
 ## Test
 
 ```bash
 npm test
+```
+
+## Environment variables
+
+Refer to https://docs.kaiko.com for information about instruments and assets.
+
+- `CUBIT_API_KEY`: Kaiko Market Data API key
+- `BASE_ASSET`: Base asset to include VWAP for
+- `QUOTE_ASSETS`: Quote assets to compute VWAP between (comma-delimited)
+
+
+## Input parameters
+
+```
+{
+  interval: 1m|2m|3m|5m|10m|15m|30m|1h|2h|3h|4h|1d
+}
 ```
 
 ## Create the zip

@@ -1,70 +1,32 @@
-/*
-const assert = require('chai').assert;
-const createRequest = require('../index.js').createRequest;
-let moment = require('moment');
+/* eslint-env mocha */
+import chai = require('chai');
+const expect = chai.expect;
+import Big from 'big.js';
 
-describe('createRequest', () => {
-	context('with a given start time (-2 days)', () => {
-		const jobID = '278c97ffadb54a5bbb93cfec5f7b5503';
-		const req = {
-			id: jobID,
-			data: {
-				exchange: 'stmp',
-				instrument: 'btc-usd',
-				start_time: (moment.utc().format('X') - 172800) // Solidity: `now - 2 days`
-			}
-		};
+import { calculateVWAP } from '../src/index';
 
-		it('returns data to the node', (done) => {
-			createRequest(req, (statusCode, data) => {
-				assert.equal(statusCode, 200);
-				assert.equal(data.jobRunID, jobID);
-				assert.isNotEmpty(data.data);
-				done();
-			});
-		});
-	});
-
-	context('with a given start time (-3 days) and end time (-2 days)', () => {
-		const jobID = '278c97ffadb54a5bbb93cfec5f7b5504';
-		const req = {
-			id: jobID,
-			data: {
-				exchange: 'stmp',
-				instrument: 'btc-usd',
-				start_time: (moment.utc().format('X') - 259200), // Solidity: `now - 3 days`
-				end_time: (moment.utc().format('X') - 172800) // Solidity: `now - 2 days`
-			}
-		};
-
-		it('returns data to the node', (done) => {
-			createRequest(req, (statusCode, data) => {
-				assert.equal(statusCode, 200);
-				assert.equal(data.jobRunID, jobID);
-				assert.isNotEmpty(data.data);
-				done();
-			});
-		});
-	});
-
-	context('without specify start or end times', () => {
-		const jobID = '278c97ffadb54a5bbb93cfec5f7b5505';
-		const req = {
-			id: jobID,
-			data: {
-				exchange: 'stmp',
-				instrument: 'btc-usd'
-			}
-		};
-
-		it('returns data to the node', (done) => {
-			createRequest(req, (statusCode, data) => {
-				assert.equal(statusCode, 200);
-				assert.equal(data.jobRunID, jobID);
-				assert.isNotEmpty(data.data);
-				done();
-			});
-		});
+describe('vwap', () => {
+	it('correctly aggregates four intervals', () => {
+		const entries = [
+			{
+				price: new Big('3.2'),
+				volume: new Big('526.58')
+			},
+			{
+				price: new Big('10.2'),
+				volume: new Big('523.58')
+			},
+			{
+				price: new Big('0.2'),
+				volume: new Big('528.98')
+			},
+			{
+				price: new Big('1.4'),
+				volume: new Big('524.455')
+			},
+		];
+		const { price, volume } = calculateVWAP(entries);
+		expect(price).to.deep.equal(new Big('3.73912516430206384784'));
+		expect(volume).to.deep.equal(new Big('2103.595'));
 	});
 });
-*/
