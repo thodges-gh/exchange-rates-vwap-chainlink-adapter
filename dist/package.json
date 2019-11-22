@@ -1,7 +1,7 @@
 {
-  "name": "kaiko-adapter",
-  "version": "1.0.0",
-  "description": "Chainlink external adapter for Kaiko - https://www.kaiko.com/",
+  "name": "kaiko-exchange-rates-vwap-chainlink-adapter",
+  "version": "1.1.0",
+  "description": "Chainlink VWAP external adapter for Kaiko - https://www.kaiko.com/",
   "license": "MIT",
   "main": "./dist/index.js",
   "scripts": {

@@ -1,9 +1,9 @@
 import request = require('request-promise-native');
 
-import { RequestPart } from 'request';
-import gcloudLogger from './gcloud-logger';
 import Big from 'big.js';
+import { RequestPart } from 'request';
 import winston = require('winston');
+import gcloudLogger from './gcloud-logger';
 
 let logger = winston.createLogger({
   level: 'info',
@@ -12,13 +12,28 @@ let logger = winston.createLogger({
   ],
 });
 
-interface VWAPEntry {
-  volume: Big,
-  price: Big
+export interface VWAPEntry {
+  volume: Big;
+  price: Big;
 }
 
+export const fetchQuoteAssets = async (baseAsset: string): Promise<string[]> => {
+  const url = 'https://reference-data-api.kaiko.io/v1/instruments';
+  const instrumentsResponse = await request({
+    url,
+    json: true
+  });
+  logger.info('Forwarding request', {
+    url
+  });
+  const quoteAssets: string[] = Array.from(new Set<string>(instrumentsResponse.data
+    .filter((instrument: any) => !!instrument.quote_asset && instrument.base_asset === baseAsset)
+    .map((instrument: any) => instrument.quote_asset)));
+  return quoteAssets;
+};
+
 export const fetchMarketData = async (region: string, endpoint: string, params: string): Promise<any> => {
-  const url = `https://${region}.market-api.kaiko.io/v1/data/trades.v1/${endpoint}?${params}`
+  const url = `https://${region}.market-api.kaiko.io/v1/data/trades.v1/${endpoint}?${params}`;
   const headers = {
     'X-Api-Key': process.env.CUBIT_API_KEY,
     'User-Agent': 'Kaiko Chainlink Adapter (VWAP edition)'
@@ -46,28 +61,31 @@ export const fetchDirectSpotExchangeRate = async (baseAsset: string, quoteAsset:
 };
 
 export const fetchRate = async (baseAsset: string, quoteAsset: string, interval: string) => {
-  if (quoteAsset == 'usd') {
+  if (quoteAsset === 'usd') {
     return await fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
   }
-  const baseQuote = await fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval);
-  const quoteUSD = await fetchDirectSpotExchangeRate(quoteAsset, 'usd', interval);
+  const [baseQuote, quoteUSD] = await Promise.all([
+    fetchDirectSpotExchangeRate(baseAsset, quoteAsset, interval),
+    fetchDirectSpotExchangeRate(quoteAsset, 'usd', interval)
+  ]);
   return {
-    quoteAsset: quoteAsset,
+    quoteAsset,
     volume: baseQuote.volume,
     price: baseQuote.price.mul(quoteUSD.price)
-  }
-}
+  };
+};
 
 export const calculateVWAP = (entries: VWAPEntry[]): VWAPEntry => {
-  const volume = entries.reduce(((acc: Big, { volume }) => acc.plus(volume)), new Big(0));
-  const price = entries.reduce(((acc: Big, { price, volume }) => acc.plus(price.mul(volume))), new Big(0)).div(volume);
+  const volume = entries.reduce(((acc: Big, { volume: v }) => acc.plus(v)), new Big(0));
+  const price = entries.reduce(((acc: Big, { price: p, volume: v }) => acc.plus(p.mul(v))), new Big(0)).div(volume);
   return {
     price,
     volume
-  }
+  };
 };
 
-export const calculateRate = async (baseAsset: string, quoteAssets: string[], interval: string) => {
+export const calculateRate = async (baseAsset: string, interval: string) => {
+  const quoteAssets = await fetchQuoteAssets(baseAsset);
   const constituents = await Promise.all(quoteAssets.map(async quoteAsset =>
     await fetchRate(baseAsset, quoteAsset, interval)
   ));
@@ -86,27 +104,25 @@ export const calculateRate = async (baseAsset: string, quoteAssets: string[], in
   return result;
 };
 
-const run = async (input: InputParams): Promise<[Number, ChainlinkResult]> => {
+export const run = async (input: InputParams): Promise<[number, ChainlinkResult]> => {
   if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.CUBIT_API_KEY)) {
     logger.error(`Invalid or missing.CUBIT_API_KEY ${process.env.CUBIT_API_KEY}`);
   }
-  if (!/^[a-zA-Z0-9_]{1,50}$/.test(process.env.BASE_ASSET)) {
+  const baseAsset = (input.data.baseAsset || process.env.BASE_ASSET || 'ampl').toLowerCase();
+  const interval = input.data.interval || '5m';
+  if (!/^[a-zA-Z0-9_]{1,50}$/.test(baseAsset)) {
     logger.error(`Invalid or missing BASE_ASSET ${process.env.BASE_ASSET}`);
   }
-  if (!/^[a-zA-Z0-9_,]{1,200}$/.test(process.env.QUOTE_ASSETS)) {
-    logger.error(`Invalid or missing QUOTE_ASSETS ${process.env.QUOTE_ASSETS}`);
-  }
-  const baseAsset = process.env.BASE_ASSET;
-  const quoteAssets = process.env.QUOTE_ASSETS.split(',');
-  quoteAssets.forEach(q => {
-    if (!/^[a-zA-Z0-9_]{1,50}$/.test(q)) {
-      logger.error(`Invalid quote asset ${q}`);
+  logger.info('Received request', {
+    ...input,
+    data: {
+      ...input.data,
+      baseAsset,
+      interval
     }
   });
-
-  gcloudLogger.info('Received request', input);
   try {
-    const data = await calculateRate(baseAsset, quoteAssets, input.data.interval);
+    const data = await calculateRate(baseAsset, interval);
     return [200, {
       jobRunID: input.id,
       status: 'completed',
@@ -124,7 +140,7 @@ const run = async (input: InputParams): Promise<[Number, ChainlinkResult]> => {
   }
 };
 
-// GCP Cloud Fuction handler 
+// GCP Cloud Fuction handler
 export const gcpservice = (req: RequestPart, res: any) => {
   logger = gcloudLogger;
   run(req.body).then(([statusCode, data]) => {

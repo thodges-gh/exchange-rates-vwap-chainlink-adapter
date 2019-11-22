@@ -1,5 +1,6 @@
 interface InputData {
-  interval: string;
+  interval?: string;
+  baseAsset?: string;
 }
 
 interface InputParams {
