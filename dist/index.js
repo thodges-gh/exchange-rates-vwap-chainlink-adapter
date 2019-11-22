@@ -83,6 +83,7 @@ exports.calculateRate = async (baseAsset, interval) => {
         quoteAssets,
         price: price.toString(),
         volume: volume.toString(),
+        result: +(price.toString()),
         constituents: constituents.map(c => ({
             quoteAsset: c.quoteAsset,
             volume: c.volume.toString(),
@@ -95,7 +96,7 @@ exports.run = async (input) => {
     if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.API_KEY)) {
         logger.error(`Invalid or missing API_KEY ${process.env.API_KEY}`);
     }
-    const baseAsset = (input.data.baseAsset || process.env.BASE_ASSET || 'ampl').toLowerCase();
+    const baseAsset = (input.data.baseAsset || input.data.coin || process.env.BASE_ASSET || 'ampl').toLowerCase();
     const interval = input.data.interval || '5m';
     if (!/^[a-zA-Z0-9_]{1,50}$/.test(baseAsset)) {
         logger.error(`Invalid or missing BASE_ASSET ${baseAsset}`);
@@ -113,6 +114,7 @@ exports.run = async (input) => {
         return [200, {
                 jobRunID: input.id,
                 status: 'completed',
+                result: data.result,
                 data
             }];
     }

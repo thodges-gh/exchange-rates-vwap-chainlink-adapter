@@ -1,6 +1,7 @@
 interface InputData {
   interval?: string;
   baseAsset?: string;
+  coin?: string;
 }
 
 interface InputParams {
@@ -13,6 +14,7 @@ interface ChainlinkResult {
   status?: string;
   error?: string;
   data?: any;
+  result?: number;
 }
 
 type Callback = (statusCode: number, result: ChainlinkResult) => void;
