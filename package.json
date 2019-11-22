@@ -12,11 +12,11 @@
     "watch": "npx tsc -w"
   },
   "dependencies": {
-    "@google-cloud/logging-winston": "^0.11.1",
+    "@google-cloud/logging-winston": "^1.1.1",
     "big.js": "^5.2.2",
-    "moment": "^2.22.2",
+    "moment": "^2.4.0",
     "request": "^2.88.0",
-    "request-promise-native": "^1.0.7",
+    "request-promise-native": "^1.0.8",
     "winston": "^3.2.1"
   },
   "devDependencies": {
