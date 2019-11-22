@@ -5,6 +5,8 @@ import { RequestPart } from 'request';
 import winston = require('winston');
 import gcloudLogger from './gcloud-logger';
 
+const MAX_QUOTE_ASSETS = 5;
+
 let logger = winston.createLogger({
   level: 'info',
   transports: [
@@ -28,14 +30,15 @@ export const fetchQuoteAssets = async (baseAsset: string): Promise<string[]> => 
   });
   const quoteAssets: string[] = Array.from(new Set<string>(instrumentsResponse.data
     .filter((instrument: any) => !!instrument.quote_asset && instrument.base_asset === baseAsset)
-    .map((instrument: any) => instrument.quote_asset)));
+    .map((instrument: any) => instrument.quote_asset)))
+    .slice(0, MAX_QUOTE_ASSETS);
   return quoteAssets;
 };
 
 export const fetchMarketData = async (region: string, endpoint: string, params: string): Promise<any> => {
   const url = `https://${region}.market-api.kaiko.io/v1/data/trades.v1/${endpoint}?${params}`;
   const headers = {
-    'X-Api-Key': process.env.CUBIT_API_KEY,
+    'X-Api-Key': process.env.API_KEY,
     'User-Agent': 'Kaiko Chainlink Adapter (VWAP edition)'
   };
   logger.info('Forwarding request', {
@@ -105,13 +108,13 @@ export const calculateRate = async (baseAsset: string, interval: string) => {
 };
 
 export const run = async (input: InputParams): Promise<[number, ChainlinkResult]> => {
-  if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.CUBIT_API_KEY)) {
-    logger.error(`Invalid or missing.CUBIT_API_KEY ${process.env.CUBIT_API_KEY}`);
+  if (!/^[a-zA-Z0-9]{1,100}$/.test(process.env.API_KEY)) {
+    logger.error(`Invalid or missing API_KEY ${process.env.API_KEY}`);
   }
   const baseAsset = (input.data.baseAsset || process.env.BASE_ASSET || 'ampl').toLowerCase();
   const interval = input.data.interval || '5m';
   if (!/^[a-zA-Z0-9_]{1,50}$/.test(baseAsset)) {
-    logger.error(`Invalid or missing BASE_ASSET ${process.env.BASE_ASSET}`);
+    logger.error(`Invalid or missing BASE_ASSET ${baseAsset}`);
   }
   logger.info('Received request', {
     ...input,
