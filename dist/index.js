@@ -83,7 +83,7 @@ exports.calculateRate = async (baseAsset, interval) => {
         quoteAssets,
         price: price.toString(),
         volume: volume.toString(),
-        result: +(price.toString()),
+        result: parseFloat(price.toString()),
         constituents: constituents.map(c => ({
             quoteAsset: c.quoteAsset,
             volume: c.volume.toString(),
