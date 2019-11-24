@@ -1,6 +1,5 @@
 interface InputData {
   interval?: string;
-  baseAsset?: string;
   coin?: string;
 }
 

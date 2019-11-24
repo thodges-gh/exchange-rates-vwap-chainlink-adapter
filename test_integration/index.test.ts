@@ -11,7 +11,7 @@ describe('run', () => {
     const req: InputParams = {
       id: jobID,
       data: {
-        baseAsset: 'AMPL',
+        coin: 'AMPL',
         interval: '1d'
       }
     };
